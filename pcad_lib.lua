@@ -12,6 +12,7 @@ local layers_t = {
    ["21"] = "F.Fab",
    ["22"] = "F.Fab",
    ["8"] = "F.Paste",
+   ["symbol"] = "symbol"
 }
 -- covert pcad graph to kicad graph
 local graph_t = {
@@ -22,7 +23,27 @@ local graph_t = {
 local global_fonts = {}
 local global_units = "mil"
 -- covert pcad number to kicad, mm/mil to mm, remove the unit string
+local global_symbol_mode = true
 function tokicad(value, quit)
+    if global_symbol_mode then
+        local p = string.find(value, "mm")
+        if p then
+            local t = string.sub(value,1, p-1)
+            return string.format( "%.3f", tonumber(t)/ 0.0254)
+        end
+        p = string.find(value, "deg")
+        if p then
+            return string.sub(value,1, p-1)
+        end
+        p = string.find(value, "mil")
+        if p then
+            return math.floor(tonumber(string.sub(value,1, p-1)))
+        end
+        if quit then return tonumber(value) end
+        return tokicad(value .. global_units, true)
+    end
+
+
     local p = string.find(value, "mm")
     if p then
         return string.sub(value,1, p-1)
@@ -48,6 +69,9 @@ end
 
 -- translate pcad coordinate to kicad
 local function KiCoord(x,y)
+    if global_symbol_mode then
+        return x,y
+    end
     return x,-y
 end
 
@@ -87,11 +111,11 @@ end
 
 local function rotate_p2p(ox,oy, mx,my, rotate)
     local rot = rotate and toArc(rotate) or toArc(0)
-    ox, oy = ox, -oy
-    mx, my = mx, -my
+    ox, oy = KiCoord(ox, oy)
+    mx, my = KiCoord(mx, my)
     local nx = (mx - ox)*math.cos(rot) - (my - oy)*math.sin(rot) + ox
     local ny = (mx - ox)*math.sin(rot) + (my - oy)*math.cos(rot) + oy
-    return nx,-ny
+    return KiCoord(nx,ny)
 end
 local function min_max(...)
     local mi,ma
@@ -247,8 +271,8 @@ end
 local function collect_pad_font(lib_table)
     local pads = {}
     local fonts = {}
-    pads.count = 1
-    fonts.count = 1
+    pads.count = 0
+    fonts.count = 0
     local hk = 1
     for i=1,#lib_table do
         local t = lib_table[i]
@@ -286,11 +310,6 @@ local function parse_pads(t, pads)
                     num = p[j][2]
                 elseif ele_is(p[j], "padStyleRef") then
                     pn = p[j][2]
-                    --if pads[pn] then
-                    --    pad.data = pads[pn]
-                    --else
-                    --    LogI("Pad ", pn , " not found in part")
-                    --end
                 elseif ele_is(p[j], "pt") then
                     x = tokicad(p[j][2])
                     y = tokicad(p[j][3])
@@ -319,18 +338,49 @@ local function arcToString(arc)
         return string.gsub("(fp_arc (center $sx $sy) (end $ex $ey) (angle $angle) (layer $layer) (width $width))", "%$(%w+)", arc)
     end
 end
+local function arcToSymbol(arc, part)
+    local tt = {}
+    for k,v in pairs(arc) do
+        tt[k] = v
+    end
+    tt.part = part
+    local sa = tt.startAngle
+    tt.startAngle = math.floor(tt.endAngle)
+    tt.endAngle = math.floor(sa)
+    
+    tt.sx = math.floor(arc.sx + math.cos(toArc(tt.startAngle/10))*arc.radius)
+    tt.sy = math.floor(arc.sy + math.sin(toArc(tt.startAngle/10))*arc.radius)
+    tt.ex = math.floor(arc.sx + math.cos(toArc(tt.endAngle/10))*arc.radius)
+    tt.ey = math.floor(arc.sy + math.sin(toArc(tt.endAngle/10))*arc.radius)
+    return string.gsub("A $x $y $radius $startAngle $endAngle $part 1 $width N $sx $sy $ex $ey", "%$(%w+)", tt)
+end
 local function toKicadArc(x,y,r,startAngle, sweepAngle, width, layer)
     local res = {}
     sweepAngle = tonumber(sweepAngle)
     res.sx,res.sy,res.ex,res.ey,res.angle,res.width = x,y, x+math.cos(toArc(startAngle))*r, y-math.sin(toArc(startAngle))*r, -sweepAngle, width
+    res.radius = r
+    res.x,res.y = x,y
+    res.startAngle = startAngle*10
+    res.endAngle = (startAngle + sweepAngle)*10
     res.layer = layer
     res.tostring = arcToString
+    res.toSymbol = arcToSymbol
     res.bbox = { {res.sx-r, res.sy-r}, {res.sx+r, res.sy+r} }
     return res
 end
 
 local function lineToString(line)
     return string.gsub("(fp_line (start $sx $sy) (end $ex $ey) (layer $layer) (width $width))", "%$(%w+)", line)
+end
+local function lineToSymbol(line, part)
+    local tt = {}
+    tt.part = part
+    tt.width = line.width
+    tt.sx = line.sx
+    tt.ex = line.ex
+    tt.sy = line.sy
+    tt.ey = line.ey
+    return string.gsub("P 2 $part 1 $width $sx $sy $ex $ey N", "%$(%w+)", tt)
 end
 local function toKicadLine(pts, width, layer)
     local r = {}
@@ -340,6 +390,7 @@ local function toKicadLine(pts, width, layer)
     r.ey = pts[2][2]
     r.layer = layer
     r.tostring = lineToString
+    r.toSymbol = lineToSymbol
     r.width = width
     local sx = tonumber(r.sx)
     local ex = tonumber(r.ex)
@@ -350,6 +401,7 @@ local function toKicadLine(pts, width, layer)
     local y1 = sy<ey and sy or ey
     local y2 = sy<ey and ey or sy
     r.bbox = { {x1,y1}, {x2,y2}}
+    r.isLine = true
     return r
 end
 local function polyToString(poly)
@@ -362,11 +414,24 @@ local function polyToString(poly)
     r = r .. ") (layer " .. poly.layer .. ") (width 0.15))"
     return r
 end
+local function polyToSymbol(poly, part)
+    local tt = {}
+    tt.part = part
+    tt.width = 15
+    tt.ptCnt = #poly.pts
+    local r = string.gsub("P $ptCnt $part 1 $width ", "%$(%w+)", tt)
+    for i=1,#poly.pts do
+        local x,y = poly.pts[i][1], poly.pts[i][2]
+        r = r .. x .. " ".. y .. " "
+    end
+    return r .. "f"
+end
 local function toKicadPoly(pts, layer)
     local r = {}
     r.pts = pts
     r.layer = layer
     r.tostring = polyToString
+    r.toSymbol = polyToSymbol
     local x1,x2,y1,y2
     for i=1,#pts do
         local x,y = tonumber(pts[i][1]), tonumber(pts[i][2])
@@ -386,17 +451,52 @@ local function textToString(text)
     text.fontstr = text.font:tostring()
     text.pos = posToString(text.x,text.y,text.rotate)
     text.hidestr = text.hide and " hide" or ""
+    if text.t == '"RefDes"' then
+        text.fpType = "reference"
+        text.fpLayer = "F.SilkS"
+    elseif text.t == '"Type"' then
+        text.fpType = "value"
+        text.fpLayer = "F.Fab"
+    else
+        text.fpType = text.t
+        text.fpLayer = text.layer
+    end
     return string.gsub([[
-(fp_text $t $value ($pos) (layer $layer)$hidestr
+(fp_text $fpType $value ($pos) (layer $fpLayer)$hidestr
     (effects ($fontstr))
   )]], "%$(%w+)", text)
 end
+
+local function textToSymbol(text, index, needType)
+    local tt = {}
+    tt.value = text.value
+    tt.index = index
+    tt.size = text.font.w
+    tt.x = text.x
+    tt.y = text.y
+    local rot = tonumber(text.rotate or 0)
+    if rot == 0 or rot == 180 then
+        tt.dir = "H"
+    else
+        tt.dir = "V"
+    end
+    tt.visible = text.hide and "I" or "V"
+    local r = string.gsub([[
+F$index $value $x $y $size $dir $visible C CNN]], "%$(%w+)", tt)
+    if needType then
+        r = r .. " " .. text.t
+    end
+    return r
+end
+
 local function toKicadText(x, y, rotate, text_type, value, font, hide, layer)
     local r = {}
     local str = value
     if string.find(value, '"') then
         str = string.sub(str, 2,-2)
     end
+    if not global_symbol_mode then
+    
     local l = #str
     local rot = rotate and toArc(rotate) or toArc(0)
     
@@ -404,15 +504,18 @@ local function toKicadText(x, y, rotate, text_type, value, font, hide, layer)
     local ly = font.h*(1/1.69333)
     local lr = math.sqrt(lx*lx + ly*ly)
     -- get the orignal position in normal coord
-    local ox, oy = x, -y
+    local ox, oy = KiCoord(x, y)
     -- get the text mid point
     local mx, my = ox + lx/ 2, oy + ly/ 2
     -- rotate the mid point by org point
     local nx = (mx - ox)*math.cos(rot) - (my - oy)*math.sin(rot) + ox
     local ny = (mx - ox)*math.sin(rot) + (my - oy)*math.cos(rot) + oy
     -- covert back to kicad coord
-    r.x = nx
-    r.y = -ny
+    r.x,r.y = KiCoord(nx,ny)
+    else
+    r.x,r.y = x,y
+    end
+
     r.rotate = rotate
     r.value = value
     r.t = text_type
@@ -420,101 +523,111 @@ local function toKicadText(x, y, rotate, text_type, value, font, hide, layer)
     r.hide = hide
     r.layer = layer
     r.tostring = textToString
+    r.toSymbol = textToSymbol
+    r.isText = true
     return r
 end
 
-local function parse_graph(t, part)
+local function parse_graph(gv, layer, parent_name)
+    if gv[1] == "arc" then
+        local x,y,r,startAngle,sweepAngle, width
+        for i=2,#gv do
+            if ele_is(gv[i], "pt") then
+                x = tokicad(gv[i][2])
+                y = tokicad(gv[i][3])
+            elseif ele_is(gv[i], "radius") then
+                r = tokicad(gv[i][2])
+            elseif ele_is(gv[i], "startAngle") then
+                startAngle = tokicad(gv[i][2].."deg")
+            elseif ele_is(gv[i], "sweepAngle") then
+                sweepAngle = tokicad(gv[i][2].."deg")
+            elseif ele_is(gv[i], "width") then
+                width = tokicad(gv[i][2])
+            else
+                LogI("Un-processed element of arc graph in ", parent_name)
+            end
+        end
+        x,y = KiCoord(x,y)
+        return toKicadArc(x,y,r,startAngle,sweepAngle,width,layer)
+    elseif gv[1] == "line" then
+        local pts = {}
+        local width
+        for i=2,#gv do
+            if ele_is(gv[i], "pt") then
+                local x,y = tokicad(gv[i][2]), tokicad(gv[i][3])
+                x,y = KiCoord(x,y)
+                pts[#pts+1] = {x,y}
+            elseif ele_is(gv[i], "width") then
+                width = tokicad(gv[i][2])
+            else
+                LogI("Un-processed element of line graph in ", parent_name)
+            end
+        end
+        return toKicadLine(pts,width,layer)
+    elseif gv[1] == "pcbPoly" or gv[1] == "poly" then
+        local pts = {}
+        for i=2,#gv do
+            if ele_is(gv[i], "pt") then
+                local x,y = tokicad(gv[i][2]), tokicad(gv[i][3])
+                x,y = KiCoord(x,y)
+                pts[#pts+1] = {x,y}
+            else
+                LogI("Un-processed element of poly graph in ", parent_name)
+            end
+        end
+        return toKicadPoly(pts,layer)
+    elseif (gv[1] == "attr") or (gv[1] == "text") then
+        local attr_t,x,y,rotate,hide,font,value
+        attr_t = gv[2]
+        value = gv[3]
+        for i=4,#gv do
+            if ele_is(gv[i], "pt") then
+                x,y = tokicad(gv[i][2]),tokicad(gv[i][3])
+            elseif ele_is(gv[i], "rotation") then
+                rotate = tokicad(gv[i][2].."deg")
+            elseif ele_is(gv[i], "isVisible") then
+                hide = not (gv[i][2] == "True")
+            elseif ele_is(gv[i], "textStyleRef") then
+                font = global_fonts[gv[i][2]]
+                if not font then
+                    LogI("Font (" .. gv[i][2] ..") not found in ", parent_name)
+                end
+            elseif ele_is(gv[i], "justify") or ele_is(gv[i], "extent") then
+                -- not justify used in kicad 
+            else
+                LogI("Un-processed element of attr in ", parent_name)
+            end
+        end
+        
+        if gv[1] == "text" then
+            x,y = tokicad(gv[2][2]),tokicad(gv[2][3])
+        end
+        x,y = KiCoord(x,y)
+        if attr_t == [["RefDes"]] then
+            return toKicadText(x,y,rotate, attr_t, "REF**", font, hide,layer)
+        elseif attr_t == [["Type"]] then
+            return toKicadText(x,y,rotate, attr_t, parent_name, font, hide,layer)
+        elseif gv[1] == "text" then
+            return toKicadText(x,y,rotate, "user", value, font, hide, layer)
+        else
+            return toKicadText(x,y,rotate, attr_t, value, font, hide,layer)
+            --LogI("Unknown attr type " .. attr_t  .. " in", parent_name)
+        end
+    else
+        LogI("Unknown graph type (" .. gv[1] .. ") in ", parent_name)
+    end
+    return nil
+end
+
+local function parse_part_graph(t, part)
     part.graphs = part.graphs or {}
     local graphs = part.graphs
     local l = t[2][2]
     local layer = layers_t[l]
     if layer then
         for j=3, #t do
-            local gv = t[j]
-            if gv[1] == "arc" then
-                local x,y,r,startAngle,sweepAngle, width
-                for i=2,#gv do
-                    if ele_is(gv[i], "pt") then
-                        x = tokicad(gv[i][2])
-                        y = tokicad(gv[i][3])
-                    elseif ele_is(gv[i], "radius") then
-                        r = tokicad(gv[i][2])
-                    elseif ele_is(gv[i], "startAngle") then
-                        startAngle = tokicad(gv[i][2].."deg")
-                    elseif ele_is(gv[i], "sweepAngle") then
-                        sweepAngle = tokicad(gv[i][2].."deg")
-                    elseif ele_is(gv[i], "width") then
-                        width = tokicad(gv[i][2])
-                    else
-                        LogI("Un-processed element of arc graph in ", part.name)
-                    end
-                end
-                x,y = KiCoord(x,y)
-                graphs[#graphs+1] = toKicadArc(x,y,r,startAngle,sweepAngle,width,layer)
-            elseif gv[1] == "line" then
-                local pts = {}
-                local width
-                for i=2,#gv do
-                    if ele_is(gv[i], "pt") then
-                        local x,y = tokicad(gv[i][2]), tokicad(gv[i][3])
-                        x,y = KiCoord(x,y)
-                        pts[#pts+1] = {x,y}
-                    elseif ele_is(gv[i], "width") then
-                        width = tokicad(gv[i][2])
-                    else
-                        LogI("Un-processed element of line graph in ", part.name)
-                    end
-                end
-                graphs[#graphs+1] = toKicadLine(pts,width,layer)
-            elseif gv[1] == "pcbPoly" then
-                local pts = {}
-                for i=2,#gv do
-                    if ele_is(gv[i], "pt") then
-                        local x,y = tokicad(gv[i][2]), tokicad(gv[i][3])
-                        x,y = KiCoord(x,y)
-                        pts[#pts+1] = {x,y}
-                    else
-                        LogI("Un-processed element of poly graph in ", part.name)
-                    end
-                end
-                graphs[#graphs+1] = toKicadPoly(pts,layer)
-            elseif (gv[1] == "attr") or (gv[1] == "text") then
-                local attr_t,x,y,rotate,hide,font,value
-                attr_t = gv[2]
-                value = gv[3]
-                for i=4,#gv do
-                    if ele_is(gv[i], "pt") then
-                        x,y = tokicad(gv[i][2]),tokicad(gv[i][3])
-                    elseif ele_is(gv[i], "rotation") then
-                        rotate = tokicad(gv[i][2].."deg")
-                    elseif ele_is(gv[i], "isVisible") then
-                        hide = not (gv[i][2] == "True")
-                    elseif ele_is(gv[i], "textStyleRef") then
-                        font = global_fonts[gv[i][2]]
-                        if not font then
-                            LogI("Font (" .. gv[i][2] ..") not found in ", part.name)
-                        end
-                    else
-                        LogI("Un-processed element of attr in ", part.name)
-                    end
-                end
-                
-                if gv[1] == "text" then
-                    x,y = tokicad(gv[2][2]),tokicad(gv[2][3])
-                end
-                x,y = KiCoord(x,y)
-                if attr_t == [["RefDes"]] then
-                    graphs[#graphs+1] = toKicadText(x,y,rotate, "reference", "REF**", font, hide,"F.SilkS")
-                elseif attr_t == [["Type"]] then
-                    graphs[#graphs+1] = toKicadText(x,y,rotate, "value", part.name, font, hide,"F.Fab")
-                elseif gv[1] == "text" then
-                    graphs[#graphs+1] = toKicadText(x,y,rotate, "user", value, font, hide, layer)
-                else
-                    LogI("Unknown attr type " .. attr_t  .. " in", part.name)
-                end
-            else
-                LogI("Unknown graph type (" .. gv[1] .. ") in ", part.name)
-            end
+            local r = parse_graph(t[j], layer, part.name)
+            if r then graphs[#graphs+1] = r end
         end
     else
         LogI("Unknown layer(" .. l .. ") in ", part.name)
@@ -584,26 +697,389 @@ local function build_part(t, pads)
         if ele_is(t, "multiLayer") then
             r.pads = parse_pads(t, pads)
         elseif ele_is(t, "layerContents") then
-            parse_graph(t, r)
+            parse_part_graph(t, r)
         end
     end
     create_part_bbox(r)
     return r
 end
 
-local function collect_part(lib_table, pads)
+local function pinToKiCadSymbol(pin)
+    local r = ""
+    for k,v in pairs(pin) do
+        r = r .. k .. ":" .. tostring(v) .. ", "
+    end
+    return r
+end
+
+local function build_pin(t, parent_name)
+    local pin = {}
+    for i=2, #t do
+        local e = t[i]
+        if     ele_is(e, "pinNum") then
+            pin.num = e[2]
+        elseif ele_is(e, "pt") then
+            pin.x,pin.y = KiCoord(tokicad(e[2]), tokicad(e[3]))
+        elseif ele_is(e, "rotation") then
+            pin.rotate = tokicad(e[2] .. "deg")
+        elseif ele_is(e, "isFlipped") then
+            pin.flipped = "False" ~= e[2]
+        elseif ele_is(e, "pinLength") then
+            pin.length = tokicad(e[2])
+        elseif ele_is(e, "pinDisplay") then
+            pin[e[2][1]] = e[2][2]
+            pin[e[3][1]] = e[3][2]
+        elseif ele_is(e, "pinDes") then
+            pin.desc = parse_graph(e[2], "symbol", parent_name .."pin:" .. pin.num)
+        elseif ele_is(e, "pinName") then
+            pin.name = parse_graph(e[2], "symbol", parent_name .."pin:" .. pin.num)
+        elseif ele_is(e, "insideEdgeStyle") then
+            pin.style = e[2]
+        else
+            LogI("Un-process element (" .. e[1] .. ") in pin in " .. parent_name)
+        end
+    end
+    pin.toSymbol = pinToKiCadSymbol
+    return pin.num, pin
+end
+
+local function compPinToKiCadSymbol(pin)
+    return string.gsub("X $name $num $x $y $length $dir $nameSize $numSize $partNum 1 $eleType", "%$(%w+)", pin)
+end
+
+local eleType_t = {
+    Passive = "U",
+    Bidirectional = "B",
+    Input = "I",
+    Output = "O",
+    Power = "W",
+}
+local function toKicadPinEleType(pcadType)
+    if eleType_t[pcadType] then
+        return eleType_t[pcadType]
+    else
+        LogI("Unkonwn pin type " .. pcadType)
+        return "U"
+    end
+end
+
+local function toKicadPinDir(angle)
+    local a = tonumber(angle)
+    if a == 0 then
+        return "L"
+    elseif a == 90 then
+        return "U"
+    elseif a == 180 then
+        return "R"
+    elseif a == 270 then
+        return "D"
+    else
+        LogI("Unkonwn pin direction " .. angle)
+        return "R"
+    end
+end
+
+local function symbolCreatePin(sym, compPin)
+    local symPin = sym.pins[compPin.symPinNum]
     local r = {}
+    if symPin then
+        for k,v in pairs(symPin) do
+            r[k] = v
+        end
+        r.nameSize = r.desc.font.w
+        r.numSize = r.name.font.w
+        r.name = make_name(compPin.pinName)
+        r.num = make_name(compPin.pinNum)
+        r.disNum = r.dispPinDes ~= "False"
+        r.disName = r.dispPinName ~= "False"
+        r.partNum = compPin.partNum
+        r.dir = toKicadPinDir(r.rotate)
+        if r.dir == "R" then
+            r.x = r.x - r.length
+        elseif r.dir == "L" then
+            r.x = r.x + r.length
+        elseif r.dir == "U" then
+            r.y = r.y - r.length
+        elseif r.dir == "D" then
+            r.y = r.y + r.length
+        end
+        r.eleType = toKicadPinEleType(compPin.pinType)
+        r.toSymbol = compPinToKiCadSymbol
+        return r
+    else
+        LogI("Fail to find pin ("..compPin.symPinNum..") in symbol " .. sym.name)
+        return nil
+    end
+end
+
+local function build_symbol(t)
+    local n = t[2]
+    local symbol = {}
+    symbol.name = n
+    symbol.pins = {}
+    symbol.graphs = {}
+    for i=4,#t do
+        local e = t[i]
+        if ele_is(e, "pin") then
+            local pinNum, pin = build_pin(e, n)
+            if symbol.pins[pinNum] then
+                LogI("Pin number (" .. pinNum .. ") re-defined in " .. n)
+            end
+            symbol.pins[pinNum] = pin
+        else
+            local graph = parse_graph(e, "symbol", n)
+            symbol.graphs[#symbol.graphs+1] = graph
+        end
+    end
+    symbol.createPin = symbolCreatePin
+    return n,symbol
+end
+
+local function take(t, pos)
+    local r = {}
+    for i=1,#t do
+        if i~= pos then
+            r[#r+1] = t[i]
+        end
+    end
+    return r
+end
+
+local function pt_equal(p1,p2)
+    return p1[1] == p2[1] and p1[2] == p2[2]
+end
+local function pt_s(l)
+    return {l.sx, l.sy}
+end
+local function pt_e(l)
+    return {l.ex, l.ey}
+end
+local function find_pt(pt, ls)
+    local find = false
+    local pos = nil
+    local s = false
+    for i=1,#ls do
+        if pt_equal(pt, pt_s(ls[i])) then
+            if not find then
+                find = true
+                pos = i
+                s = true
+            else
+                --LogI("Point already get")
+            end
+        end
+        if pt_equal(pt, pt_e(ls[i])) then
+            if not find then
+                find = true
+                pos = i
+                s = false
+            else
+                --LogI("Point already get")
+            end    
+        end
+    end
+    return pos,s
+end
+
+local function mergeCompLine(ls, part)
+    if #ls < 1 then return end
+    local ps = {ls[1].sx, ls[1].sy}
+    local np = {ls[1].ex, ls[1].ey}
+    local rls = take(ls,1)
+    local pts = {ps,np}
+    LogI("---", ps[1],ps[2], " -> ", np[1],np[2])
+    while not pt_equal(ps, np) do
+        local cp = {np[1],np[2]}
+        local pos,s = find_pt(np, rls)
+        if pos then
+            np = s and pt_e(rls[pos]) or pt_s(rls[pos])
+            rls = take(rls, pos)
+            pts[#pts+1] = np
+        else
+            LogI("No loop find, maybe not poly")
+            break
+        end
+        LogI("---", cp[1],cp[2], " -> ", np[1],np[2])
+    end
+    local r = ""
+    if pt_equal(ps, np) then
+        local poly = toKicadPoly(pts, "symbol")
+        r = r .. poly:toSymbol(part) .. "\n"
+    else
+        rls = ls
+    end
+    
+    for i=1,#rls do
+        r = r .. ls[i]:toSymbol(part) .. "\n"
+    end
+    return r
+end
+local function compToSymbol(comp)
+    local r = "#\n# " .. comp.name .. "\n#\n"
+    r = r .. string.gsub([[DEF $name $ref 0 40 $drawPinNo $drawPinName $partNum F N]], "%$(%w+)", comp)
+    r = r .. "\n"
+    local sym = comp.symbols['1']
+    local texts = {1,2,3,4}
+    for i=1,#sym.graphs do
+        local g = sym.graphs[i]
+        if g.isText then
+            if     g.t == '"RefDes"' then
+                g.value = '"'..comp.ref..'"'
+                texts[1] = g
+            elseif g.t == '"Type"' then
+                texts[2] = g
+            elseif g.t == '"Package"' then
+                g.value = comp.footPrint
+                texts[3] = g
+            elseif g.t == '"ComponentLink1URL"' then
+                texts[4] = g
+            else
+                texts[#texts + 1] = g
+            end
+        end
+    end
+    for i=1,#texts do
+        r = r .. texts[i]:toSymbol(i-1, i>4) .. "\n"
+    end
+    
+    r = r .. "DRAW\n"
+    --for k,v in pairs(comp.symbols) do
+    for i = 1, 100 do
+        local k = tostring(i)
+        local v = comp.symbols[k]
+        if not v then break end
+        local compLines = {}
+        for i=1,#v.graphs do
+            local g = v.graphs[i]
+            if g.isLine then
+                compLines[#compLines+1] = g
+            elseif not g.isText then
+                r = r .. g:toSymbol(k) .. "\n"
+            end
+        end
+        r = r .. mergeCompLine(compLines, k)
+    end
+    
+    
+    
+    
+    for i=1,#comp.pins do
+        r = r .. comp.pins[i]:toSymbol() .. "\n"
+    end
+    r = r .. "ENDDRAW\nENDDEF\n"
+    return r
+end
+
+local function get_map_like_data(t, keys)
+    local r = {}
+    local chk = {}
+    for k,v in pairs(keys) do
+        chk[k] = 0
+    end
+    for i=2,#t do
+        if type(t[i]) == "table" then
+            local n = t[i][1]
+            local m = keys[n]
+            if m then
+                chk[n] = chk[n] + 1
+                if type(m) == "function" then
+                    r[n] = m(t[i][2], t[i][3], t[i][4], t[i][5], t[i][6])
+                else
+                    r[n] = t[i][2]
+                end
+            end
+        elseif keys[i] then
+            chk[i] = chk[i] + 1
+            r[keys[i]] = t[i]
+        end
+    end
+    for k,v in pairs(chk) do
+        if v == 0 then
+            LogI("Key: " .. k .. "  not processed in map")
+        end
+    end
+    return r
+end
+
+
+
+local function parse_comp(t, symbols)
+    local comp = {}
+    comp.name = make_name(t[2])
+    local headers = get_map_like_data(t[4], { numParts=1, refDesPrefix=make_name})
+    comp.ref = headers.refDesPrefix
+    comp.partNum = headers.numParts
+    comp.pins = {}
+    local compPins = {}
+    local compSymbols = {}
+    for i=5, #t do
+        local e = t[i]
+        if      ele_is(e, "compPin") then
+            local compPin = get_map_like_data(e, { [2]="pinNum", pinName = 1, partNum=1,symPinNum=1,pinType=1 })
+            compPins[#compPins+1] = compPin
+        elseif  ele_is(e, "attachedSymbol") then
+            local symbol = get_map_like_data(e, {partNum=1,symbolName=1 })
+            local sym = symbols[symbol.symbolName]
+            if sym then
+                if compSymbols[symbol.partNum] then
+                    LogI("Part("..symbol.partNum..") redefined in ".. comp.name)
+                end
+                compSymbols[symbol.partNum] = sym
+            end
+        elseif  ele_is(e, "attachedPattern") then
+            local fp = get_map_like_data(e, {patternName=1})
+            comp.footPrint = fp.patternName
+        end
+    end
+    local disName = false
+    local disNum = false
+    for i=1,#compPins do
+        local cp = compPins[i]
+        local sym = compSymbols[cp.partNum]
+        if sym then
+            local p = sym:createPin(cp)
+            if p.disName then disName = true end
+            if p.disNum then disNum = true end
+            comp.pins[#comp.pins+1] = p
+        else
+            LogI("Pin " .. cp.pinNum .. " fail to get part " .. cp.partNum)
+        end
+    end
+    comp.drawPinNo = disNum and "Y" or "N"
+    comp.drawPinName = disName and "Y" or "N"
+    comp.symbols = compSymbols
+    comp.toSymbol = compToSymbol
+    return comp
+end
+
+local function colloect_comp(t, symbols)
+    local comps = {}
+    for i=1,#t do
+        local e = t[i]
+        if ele_is(e, "compDef") then
+            comps[#comps+1] = parse_comp(e, symbols)
+        end
+    end
+    return comps
+end
+
+local function collect_part_and_symbol(lib_table, pads)
+    local parts = {}
+    local symbols = {}
+    symbols.count = 0
     for i=1,#lib_table do
         local t = lib_table[i]
-        if type(t) == "table" then
-            if t[1] == "patternDefExtended" then
-                local v = build_part(t, pads)
-                r[#r+1] = v
-            end
+        if ele_is(t, "patternDefExtended") then
+            local v = build_part(t, pads)
+            parts[#parts+1] = v
+        elseif ele_is(t, "symbolDef") then
+            local k,v = build_symbol(t)
+            symbols[k] = v
+            symbols.count = symbols.count + 1
         end
         progress_hook(i,#lib_table)
     end
-    return r
+    return parts, symbols
 end
 
 local function mk_empty_dir(dir)
@@ -648,6 +1124,38 @@ These foot prints are auto generate from ]]..lib_name .. [[
     end
 end
 
+local function out_put_symbol_lib(comps, outfile, libname)
+    local f,err = io.open(outfile, "w+")
+    if f then
+        f:write([[
+EESchema-LIBRARY Version 2.4
+#encoding utf-8
+]])
+        for i=1,#comps do
+            local r = comps[i]:toSymbol()
+            f:write(r)
+            --LogI(r )
+        end
+        f:write("\n#\n#End Library")
+        f:close()
+    else
+        LogI(err)
+    end
+end
+
+local function get_file_name(file)
+    local p = string.find(file, "[^/\\]+$")
+    local r = file
+    if p and p>2 then
+        r = string.sub(file,p)
+    end
+    p = string.find(r, "[^%.]+$")
+    if p and p<#r then
+        r = string.sub(r,1,p-2)
+    end
+    r = string.gsub(r, "([%(%) ])", {["("] = "_", [")"] = "", [" "] = "_"})
+    return r
+end
 function parse_pcad_lib(filename, libname, outpath, progress, log_info)
     progress_hook = progress or progress_hook
     LogI = log_info or LogI
@@ -661,6 +1169,26 @@ function parse_pcad_lib(filename, libname, outpath, progress, log_info)
             global_units = string.lower(r[1][i][2])
         end
     end
+    
+    local isSymbol = false
+    local isFootPrint = false
+    for i=1,#r[2] do
+        if ele_is(r[2][i], "symbolDef") then
+            isSymbol = true
+        elseif ele_is(r[2][i], "patternDefExtended") then
+            isFootPrint = true
+        end
+    end
+    
+    if isSymbol and isFootPrint then
+        LogI("File contains both symbol and footprint, maybe something error")
+        return
+    end
+    if (not isSymbol) and (not isFootPrint) then
+        LogI("File don't contains either symbol and footprint, maybe something error")
+        return
+    end
+    global_symbol_mode = isSymbol
     
     _G.pcad = r
     
@@ -677,11 +1205,44 @@ function parse_pcad_lib(filename, libname, outpath, progress, log_info)
     LogI("global_units: ", global_units)
         local pads,fonts = collect_pad_font(r[2])
         global_fonts = fonts
-        local parts = collect_part(r[2], pads)
+        if global_symbol_mode then
+            local font = fonts['"(PinStyle)"']
+            if font then
+                if font.w > 50 then
+                    font.w = 50
+                    font.h = 50
+                end
+            end
+            font = fonts['"(PartStyle)"']
+            if font then
+                if font.w > 50 then
+                    font.w = 50
+                    font.h = 50
+                end
+            end
+            font = fonts['"(Default)"']
+            if font then
+                if font.w > 50 then
+                    font.w = 50
+                    font.h = 50
+                end
+            end
+        else
+            if fonts['"(Default)"'] then
+                if  tonumber(fonts['"(Default)"'].w) > 1 then
+                    fonts['"(Default)"'].w = 1
+                    fonts['"(Default)"'].h = 1
+                    fonts['"(Default)"'].thickness = 0.15
+                end
+            end
+        end
         
-        LogI("get ", #parts, " parts")
+        
+        local parts,symbols = collect_part_and_symbol(r[2], pads)
+        
+        LogI("get ", #parts, " parts  ", symbols.count, "  symbols")
         if libname == "" then
-            libname = make_name(r[2][2])
+            libname = get_file_name(filename)
         end
         if outpath == "" then
             local p = string.find(filename, "[^/\\]+$")
@@ -689,8 +1250,28 @@ function parse_pcad_lib(filename, libname, outpath, progress, log_info)
                 outpath = string.sub(filename,1,p-2)
             end
         end
-        out_put_footprint(parts, libname, outpath)
-        LogI("Convert done, library <"..libname.. "> generate in folder <" .. outpath .. ">")
+        if #parts > 0 then
+            out_put_footprint(parts, libname, outpath)
+            local outFile = libname .. ".pretty"
+            if outpath ~= "" then
+                outFile = outpath .. "/" .. outFile
+            end
+            LogI("Convert done, generate foot print library ".. outFile)
+            
+        end
+        if symbols.count > 0 then
+            local comps = colloect_comp(r[2], symbols)
+            LogI("Get ", #comps, " components")
+            local outFile = libname .. ".lib"
+            if outpath ~= "" then
+                outFile = outpath .."/".. libname .. ".lib"
+            end
+            out_put_symbol_lib(comps, outFile, libname)
+            LogI("Convert done, generate symbol library ".. outFile)
+        end
+        if symbols.count < 1 and #parts < 1 then
+            LogI("No symbol or parts found in file ".. filename)
+        end
         --[[
         for i=1, 10 do
             local p = parts[i]
