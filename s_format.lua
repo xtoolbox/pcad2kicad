@@ -135,8 +135,8 @@ function s_elements(array, name)
         i = i + 1
         while array[i] do
             local t = array[i]
-            local key = t[1]
-            if name == t[1] then
+            local key = type(t) == "table" and t[1] or nil
+            if name == key then
                 return i,t
             end
             i = i + 1

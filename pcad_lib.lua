@@ -227,8 +227,8 @@ local function fontParser(f)
     end
     return font
 end
-local function displayParser(desDisplay, numDisplay)
-    return {desDisplay[1] = desDisplay[2], numDisplay[1]=numDisplay[2]}
+local function displayParser(p1, p2)
+    return {[p1[1]] = p1[2], [p2[1]]=p2[2]}
 end
 
 local function parse_pads(t, pads)
@@ -605,41 +605,16 @@ end
 
 local function build_pin(t, parent_name)
     local pin = {}
-    local r = s_expand(t, {pinNum=1,pt=ptParser, })
-    
-    for i=2, #t do
-        local e = t[i]
-        if     ele_is(e, "pinNum") then
-            pin.num = e[2]
-        elseif ele_is(e, "pt") then
-            pin.x,pin.y = KiCoord(tokicad(e[2]), tokicad(e[3]))
-        elseif ele_is(e, "rotation") then
-            pin.rotate = tokicad(e[2] .. "deg")
-        elseif ele_is(e, "isFlipped") then
-            pin.flipped = "False" ~= e[2]
-        elseif ele_is(e, "pinLength") then
-            pin.length = tokicad(e[2])
-        elseif ele_is(e, "pinDisplay") then
-            pin[e[2][1]] = e[2][2]
-            pin[e[3][1]] = e[3][2]
-        elseif ele_is(e, "pinDes") then
-            pin.desc = parse_graph(e[2], "symbol", parent_name .."pin:" .. pin.num)
-        elseif ele_is(e, "pinName") then
-            pin.name = parse_graph(e[2], "symbol", parent_name .."pin:" .. pin.num)
-        elseif ele_is(e, "insideEdgeStyle") then
-            pin.style = e[2]
-        elseif ele_is(e, "outsideEdgeStyle") then
-            pin.outStyle = e[2]
-        else
-            LogI("Un-process element (" .. e[1] .. ") in pin in " .. parent_name)
-        end
-    end
-    pin.toSymbol = pinToKiCadSymbol
-    return pin.num, pin
+    local r = s_expand(t, {pinNum=1,pt=ptParser, pinLength=tokicad, pinDisplay=displayParser,
+    pinDes  = function(e) return parse_graph(e, "symbol", parent_name) end,
+    pinName = function(e) return parse_graph(e, "symbol", parent_name) end,
+    },{insideEdgeStyle=1, outsideEdgeStyle=1,isFlipped=boolParser,rotation=angleParser },{},true)
+    r.toSymbol = pinToKiCadSymbol
+    return r.pinNum, r
 end
 
 local function compPinToKiCadSymbol(pin)
-    local r = string.gsub("X $name $num $x $y $length $dir $nameSize $numSize $partNum 1 $eleType", "%$(%w+)", pin)
+    local r = string.gsub("X $name $num $x $y $pinLength $dir $nameSize $numSize $partNum 1 $eleType", "%$(%w+)", pin)
     if pin.hide then
         r = r .. " N"
     end
@@ -669,14 +644,10 @@ end
 
 local function toKicadPinDir(angle)
     local a = tonumber(angle)
-    if a == 0 then
-        return "L"
-    elseif a == 90 then
-        return "D"
-    elseif a == 180 then
-        return "R"
-    elseif a == 270 then
-        return "U"
+    if a == 0 then        return "L"
+    elseif a == 90 then   return "D"
+    elseif a == 180 then  return "R"
+    elseif a == 270 then  return "U"
     else
         LogI("Unkonwn pin direction " .. angle)
         return "R"
@@ -690,22 +661,24 @@ local function symbolCreatePin(sym, compPin)
         for k,v in pairs(symPin) do
             r[k] = v
         end
-        r.nameSize = r.desc.font.w
-        r.numSize = r.name.font.w
+        r.x = r.pt.x
+        r.y = r.pt.y
+        r.nameSize = r.pinDes.font.w
+        r.numSize = r.pinName.font.w
         r.name = make_name(compPin.pinName)
         r.num = make_name(compPin.pinNum)
-        r.disNum = r.dispPinDes ~= "False"
-        r.disName = r.dispPinName ~= "False"
+        r.disNum = r.pinDisplay.dispPinDes ~= "False"
+        r.disName = r.pinDisplay.dispPinName ~= "False"
         r.partNum = compPin.partNum
-        r.dir = toKicadPinDir(r.rotate)
+        r.dir = toKicadPinDir(r.rotation)
         if r.dir == "R" then
-            r.x = r.x - r.length
+            r.x = r.x - r.pinLength
         elseif r.dir == "L" then
-            r.x = r.x + r.length
+            r.x = r.x + r.pinLength
         elseif r.dir == "U" then
-            r.y = r.y - r.length
+            r.y = r.y - r.pinLength
         elseif r.dir == "D" then
-            r.y = r.y + r.length
+            r.y = r.y + r.pinLength
         end
         r.eleType = toKicadPinEleType(compPin.pinType)
         r.toSymbol = compPinToKiCadSymbol
@@ -869,10 +842,7 @@ local function compToSymbol(comp, libname4symbol)
         end
         r = r .. mergeCompLine(compLines, k)
     end
-    
-    
-    
-    
+
     for i=1,#comp.pins do
         r = r .. comp.pins[i]:toSymbol() .. "\n"
     end
@@ -928,12 +898,12 @@ local function buildCompHidePins(comp, hide_pins)
         if cp.isUp then
             p.dir = "D"
             p.x = upX
-            p.y = upY + p.length
+            p.y = upY + p.pinLength
             upX = upX + dist
         else
             p.dir = "U"
             p.x = downX
-            p.y = dwonY - p.length
+            p.y = dwonY - p.pinLength
             downX = downX + dist
         end
         -- kicad only auto connect PowerIn with power symbol
@@ -1017,16 +987,14 @@ local function collect_part_and_symbol(lib_table, pads)
     local parts = {}
     local symbols = {}
     symbols.count = 0
-    for i=1,#lib_table do
-        local t = lib_table[i]
-        if ele_is(t, "patternDefExtended") then
-            local v = build_part(t, pads)
-            parts[#parts+1] = v
-        elseif ele_is(t, "symbolDef") then
-            local k,v = build_symbol(t)
-            symbols[k] = v
-            symbols.count = symbols.count + 1
-        end
+    for i,v in s_elements(lib_table, "patternDefExtended") do
+        parts[#parts+1] = build_part(v, pads)
+        progress_hook(i,#lib_table)
+    end
+    for i,v in s_elements(lib_table, "symbolDef") do
+        local name,sym = build_symbol(v)
+        symbols[name] = sym
+        symbols.count = symbols.count + 1
         progress_hook(i,#lib_table)
     end
     return parts, symbols
