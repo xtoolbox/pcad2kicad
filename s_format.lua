@@ -79,6 +79,72 @@ local function find_s_data(s, pos)
     return r
 end
 
+-- expand the k,v pairs in the table
+function s_expand(t, keys, opt_keys, def_keys, full_parse)
+    local r = {}
+    local chk = {}
+    for k,v in pairs(keys) do
+        chk[k] = 0
+    end
+    if opt_keys then
+        for k,v in pairs(opt_keys) do
+            chk[k] = 1
+        end
+    end
+    if def_keys then
+        for k,v in pairs(def_keys) do
+            r[k] = v
+        end
+    end
+    for i=2,#t do
+        if type(t[i]) == "table" then
+            local n = t[i][1]
+            local m = keys[n]
+            if not m and opt_keys then m = opt_keys[n] end
+            if m then
+                chk[n] = chk[n] + 1
+                if type(m) == "function" then
+                    r[n] = m(t[i][2], t[i][3], t[i][4], t[i][5], t[i][6])
+                else
+                    r[n] = t[i][2]
+                end
+            else
+               if full_parse then
+                    error(n.." in map not processed")
+               end
+            end
+        elseif keys[i] or opt_keys[i] then
+            chk[i] = chk[i] + 1
+            r[keys[i]] = t[i]
+        elseif full_parse then
+            error("index " .. i .. " in map not processed")
+        end
+    end
+    for k,v in pairs(chk) do
+        if v == 0 then
+            error("Key: " .. k .. "  not processed in map")
+        end
+    end
+    return r
+end
+
+-- iterate name elements in the array
+function s_elements(array, name)
+    local i = 0
+    return function()
+        i = i + 1
+        while array[i] do
+            local t = array[i]
+            local key = t[1]
+            if name == t[1] then
+                return i,t
+            end
+            i = i + 1
+        end
+        return nil
+    end
+end
+
 function parse_s_file(filename, parse_progress) 
     s_parse_progress = parse_progress or s_parse_progress
     local f = io.open(filename, "r")

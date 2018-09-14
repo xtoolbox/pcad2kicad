@@ -7,7 +7,7 @@ Convert pcad foot print library to kicad mod
 
 使用lua命令行:
 
-lua pcad2kicad.lua "input pcad library name" [output library name] [output library path]
+lua pcad2kicad.lua <input pcad library name> [output library name] [output library path] [footprint lib for symbol]
 
 或者是用GUI工具:
 
@@ -15,7 +15,7 @@ lua pcad2kicad.lua "input pcad library name" [output library name] [output libra
 
 Use command line:
 
-lua pcad2kicad.lua "input pcad library name" [output library name] [output library path]
+lua pcad2kicad.lua <input pcad library name> [output library name] [output library path] [footprint lib for symbol]
 
 Or use the GUI tool:
 
