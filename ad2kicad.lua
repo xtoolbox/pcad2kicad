@@ -833,7 +833,7 @@ EESchema-LIBRARY Version 2.4
     else
         logData(e)
     end
-    exec('del "' .. oPath .. '" /Q')
+    exec('rd "' .. oPath .. '" /Q /S')
 end
 local function usage()
     print("usage:")
