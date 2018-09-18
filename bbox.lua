@@ -4,18 +4,16 @@ end
 local function packBB(l,t,r,b)
     return {{l,t},{r,b}}
 end
-local PI = math.asin(1)
+local PI_2 = math.asin(1)
 function toArc(angle)
-    return angle/90*PI
+    return angle/90*PI_2
 end
 
 local function rotate_p2p(ox,oy, mx,my, rotate)
     local rot = rotate and toArc(rotate) or toArc(0)
-    ox, oy = KiCoord(ox, oy)
-    mx, my = KiCoord(mx, my)
     local nx = (mx - ox)*math.cos(rot) - (my - oy)*math.sin(rot) + ox
     local ny = (mx - ox)*math.sin(rot) + (my - oy)*math.cos(rot) + oy
-    return KiCoord(nx,ny)
+    return nx,ny
 end
 local function min_max(...)
     local mi,ma

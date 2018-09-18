@@ -68,7 +68,7 @@ local function ele_is(v,n)
 end
 
 -- translate pcad coordinate to kicad
-function KiCoord(x,y)
+local function KiCoord(x,y)
     if global_symbol_mode then
         return x,y
     end
@@ -265,18 +265,22 @@ local function arcToSymbol(arc, part)
     for k,v in pairs(arc) do
         tt[k] = v
     end
-    tt.part = part
+    tt.part = part or arc.part or 0
     local sa = tt.startAngle
     tt.startAngle = math.floor(tt.endAngle)
     tt.endAngle = math.floor(sa)
-    
+    tt.fill = arc.fill or 'N'
+    if math.abs(tt.startAngle - tt.endAngle) == 3600 then
+    return string.gsub("C $x $y $radius $part 1 $width $fill", "%$(%w+)", tt)
+    else
     tt.sx = math.floor(arc.sx + math.cos(toArc(tt.startAngle/10))*arc.radius)
     tt.sy = math.floor(arc.sy + math.sin(toArc(tt.startAngle/10))*arc.radius)
     tt.ex = math.floor(arc.sx + math.cos(toArc(tt.endAngle/10))*arc.radius)
     tt.ey = math.floor(arc.sy + math.sin(toArc(tt.endAngle/10))*arc.radius)
-    return string.gsub("A $x $y $radius $startAngle $endAngle $part 1 $width N $sx $sy $ex $ey", "%$(%w+)", tt)
+    return string.gsub("A $x $y $radius $startAngle $endAngle $part 1 $width $fill $sx $sy $ex $ey", "%$(%w+)", tt)
+    end
 end
-local function toKicadArc(x,y,r,startAngle, sweepAngle, width, layer)
+function toKicadArc(x,y,r,startAngle, sweepAngle, width, layer)
     local res = {}
     sweepAngle = tonumber(sweepAngle)
     res.sx,res.sy,res.ex,res.ey,res.angle,res.width = x,y, x+math.cos(toArc(startAngle))*r, y-math.sin(toArc(startAngle))*r, -sweepAngle, width
@@ -338,11 +342,15 @@ local function polyToString(poly)
 end
 local function polyToSymbol(poly, part)
     local tt = {}
-    tt.part = part
-    tt.width = 15
+    tt.part = poly.part or part
+    tt.width = poly.width or 15
     local p1,p2 = poly.pts[1], poly.pts[#poly.pts]
+    
+    if poly.directOutput then
+    else
     if p1[1] ~= p2[1] or p1[2] ~= p2[2] then
         poly.pts[#poly.pts+1] = p1
+    end
     end
     
     tt.ptCnt = #poly.pts
@@ -351,9 +359,12 @@ local function polyToSymbol(poly, part)
         local x,y = poly.pts[i][1], poly.pts[i][2]
         r = r .. x .. " ".. y .. " "
     end
+    if poly.fill then
+        return r .. poly.fill
+    end
     return r .. (tt.ptCnt > 4 and "f" or "N")
 end
-local function toKicadPoly(pts, layer)
+function toKicadPoly(pts, layer)
     local r = {}
     r.pts = pts
     r.layer = layer
@@ -394,7 +405,7 @@ local function textToString(text)
   )]], "%$(%w+)", text)
 end
 
-local function textToSymbol(text, index, needType)
+function textToSymbol(text, index, needType)
     local tt = {}
     tt.value = text.value
     tt.index = index
@@ -408,8 +419,11 @@ local function textToSymbol(text, index, needType)
         tt.dir = "V"
     end
     tt.visible = text.hide and "I" or "V"
+    tt.hJust = text.hJust or 'C'
+    tt.vJust = text.vJust or 'C'
+    tt.vJustItalicBold = tt.vJust.."NN"
     local r = string.gsub([[
-F$index $value $x $y $size $dir $visible C CNN]], "%$(%w+)", tt)
+F$index $value $x $y $size $dir $visible $hJust $vJustItalicBold]], "%$(%w+)", tt)
     if needType then
         r = r .. " " .. text.t
     end
@@ -499,7 +513,11 @@ local function parse_graph(gv, layer, parent_name)
         if r.attr_t == [["RefDes"]] then
             r.value = "REF**"
         elseif r.attr_t == [["Type"]] then
-            r.value = parent_name
+            if global_symbol_mode then
+            r.value = removeSpaces(parent_name)
+            else
+            r.value = removeParentheses(parent_name)
+            end
         end 
         return toKicadText(r.pt.x,r.pt.y,r.rotation, r.attr_t, r.value, r.textStyleRef, not r.isVisible, layer)
     elseif gv[1] == "text" then
@@ -566,7 +584,7 @@ local function create_part_bbox(part)
     add_bbox_line(graphs, bbox)
 end
 
-local function make_name(n)
+function make_name(n)
     if string.find(n,'"') == 1 then
         n = string.sub(n,2,-2)
     end
@@ -583,7 +601,9 @@ local function build_part(t, pads)
     if string.find(n,'"') == 1 then
         n = string.sub(n,2,-2)
     end
-    n = string.gsub(n, "([%(%) ])", {["("] = "_", [")"] = "", [" "] = "_"})
+    --n = string.gsub(n, "([%(%) ])", {["("] = "_", [")"] = "", [" "] = "_"})
+    n = string.gsub(n, "  ", " ")
+    n = string.gsub(n, " ", "_")
     r.name = n
     for i,v in s_elements(graph, "multiLayer") do
         r.pads = parse_pads(v, pads)
@@ -642,7 +662,7 @@ local function toKicadPinEleType(pcadType)
     end
 end
 
-local function toKicadPinDir(angle)
+function toKicadPinDir(angle)
     local a = tonumber(angle)
     if a == 0 then        return "L"
     elseif a == 90 then   return "D"
@@ -1005,6 +1025,16 @@ local function mk_empty_dir(dir)
     os.execute('del "' .. dir .. '" /Q')
     os.execute('mkdir "' .. dir .. '"')
 end
+function removeParentheses(n)
+    local pn = string.gsub(n, "%(", "[")
+    pn = string.gsub(pn, "%)", "]")
+    return pn
+end
+function removeSpaces(n)
+    local pn = string.gsub(n, "[%s]+", " ")
+    pn = string.gsub(pn, " ", "_")
+    return pn
+end
 
 local function out_put_footprint(parts, lib_name, out_path)
     if out_path ~= "" then out_path = out_path .. "/" end
@@ -1017,7 +1047,8 @@ local function out_put_footprint(parts, lib_name, out_path)
         local file_name = lib_path .. "\\" .. part_name .. ".kicad_mod"
         local f,err = io.open(file_name, "w+")
         if f then
-            f:write("(module "..lib_name..":"..part_name.." (layer F.Cu) (tedit 58AA841A)\n")
+            local pn = removeParentheses(part_name)
+            f:write("(module "..lib_name..":"..pn.." (layer F.Cu) (tedit 58AA841A)\n")
             for j=1,#p.pads do
                 local pd = p.pads[j]
                 f:write("  " .. pd:tostring() .. "\n")
