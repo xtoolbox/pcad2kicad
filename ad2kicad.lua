@@ -249,6 +249,38 @@ local function adPinToSymbol(pin)
     return r
 end
 
+local function next_is_bar(n,i)
+    if i+1<=#n then
+        local t = string.sub(n,i+1,i+1)
+        return t == "\\"
+    end
+    return false
+end
+
+local function make_symbol_pin_name(n)
+    local r = string.gsub(n, "  ", " ")
+    r = string.gsub(r, " ", "_")
+    r = string.gsub(r, "[%s]+", "")
+    r = string.gsub(r, "^[\\]+", "")
+    local res = ""
+    local isBar = false
+    local i = 1
+    while i <= #r do
+        local t = string.sub(r,i,i)
+        if next_is_bar(r, i) then
+            if not isBar then res = res .. "~" end
+            isBar = true
+            i = i + 1
+        else
+            if isBar then res = res .. "~" end
+            isBar = false
+        end
+        res = res .. t
+        i = i + 1
+    end
+    return res
+end
+
 local function parsePin(data,fonts, comp)
     local pin = {}
     --local r = ""
@@ -292,12 +324,16 @@ local function parsePin(data,fonts, comp)
     
     if pin.dir == "R" then
         pin.x = pin.x - pin.pinLength
+        pin.bbox = BBOX.create(pin.pinLength, 10, pin.x + pin.pinLength/2, pin.y)
     elseif pin.dir == "L" then
         pin.x = pin.x + pin.pinLength
+        pin.bbox = BBOX.create(pin.pinLength, 10, pin.x - pin.pinLength/2, pin.y)
     elseif pin.dir == "U" then
         pin.y = pin.y - pin.pinLength
+        pin.bbox = BBOX.create(10, pin.pinLength, pin.x , pin.y + pin.pinLength/2)
     elseif pin.dir == "D" then
         pin.y = pin.y + pin.pinLength
+        pin.bbox = BBOX.create(10, pin.pinLength, pin.x , pin.y - pin.pinLength/2)
     end
     
     -- TODO need parse the PinTextData to get the pin text size
@@ -315,10 +351,7 @@ local function parsePin(data,fonts, comp)
     local l2 = string.unpack("I1", data, pos)
     local n2 = string.unpack("c"..l2, data, pos + 1)
     
-    
-    pin.name = string.gsub(n1, "  ", " ")
-    pin.name = string.gsub(pin.name, " ", "_")
-    pin.name = string.gsub(pin.name, "[%s]+", "")
+    pin.name = make_symbol_pin_name(n1)
     pin.num = n2
     pin.eleType,pin.tl = get_pin_type(pin.t)
     pin.toSymbol = adPinToSymbol
@@ -421,6 +454,7 @@ local function parseRectangle(block, fonts, comp)
     fill = f and 'f' or 'N',
     toSymbol = rectToSymbol,
     }
+    r.bbox = BBOX.create2P(r.x1,r.y1,r.x2,r.y2)
     comp.graphs[#comp.graphs+1] = r
 end
 
@@ -436,6 +470,8 @@ local function parseArc(block, fonts, comp)
     v.part = block.OWNERPARTID or 0
     local f = block.ISSOLID and block.ISSOLID == 'T'
     v.fill = f and 'f' or 'N'
+    v.bbox = BBOX.create(r*2,r*2)
+    v.bbox = BBOX.moveTo(v.bbox, x, y)
     comp.graphs[#comp.graphs+1] = v
 end
 
@@ -531,10 +567,17 @@ local function IEEE_polyLine_method(param, block, fonts, comp)
     local pts = {}
     local x = getPos(block['LOCATION.X'])
     local y = getPos(block['LOCATION.Y'])
+    local rotate = nil
+    if block.ORIENTATION then
+        rotate = tonumber(block.ORIENTATION) * 90
+    end
     local scale = getPos(block.SCALEFACTOR)
     scale = scale / 100
     for pt in element(param) do
         local tx,ty = pt[1]*scale + x, pt[2]*scale + y
+        if rotate then
+            tx,ty = rotate_p2p(x,y,tx,ty,rotate)
+        end
         pts[#pts+1] = {math.floor(tx), math.floor(ty)}
     end
     
@@ -554,11 +597,19 @@ end
 local function IEEE_arc_method(param, block, fonts, comp)
     factor = tonumber(block.SCALEFACTOR)
     local scale = factor / 100
-    block['LOCATION.X'] = param.x*scale
-    block['LOCATION.Y'] = param.y*scale
+    local rotate = 0
+    if block.ORIENTATION then
+        rotate = tonumber(block.ORIENTATION) * 90
+    end
+    local x = block['LOCATION.X']
+    local y = block['LOCATION.Y']
+    local mx,my = param.x*scale + x, param.y*scale + y
+    mx,my = rotate_p2p(x,y,mx,my, rotate)
+    block['LOCATION.X'] = mx
+    block['LOCATION.Y'] = my
     block.RADIUS = param.r*scale
-    block.STARTANGLE = param.startAngle
-    block.ENDANGLE = param.endAngle
+    block.STARTANGLE = param.startAngle + rotate
+    block.ENDANGLE = param.endAngle + rotate
     parseArc(block, fonts, comp)
 end
 
@@ -568,7 +619,8 @@ local function IEEE_mixed_method(param, block, fonts, comp)
     end
 end
 
-
+-- polyline method points:
+-- points with sacle factor = 100 place at 0,0, rotation = 0 degree
 local IEEE_sym = {
     ['1'] = { -- dot
         method = IEEE_circle_method,
@@ -590,7 +642,7 @@ local IEEE_sym = {
         method = IEEE_mixed_method,
         param = {
             { method = IEEE_polyLine_method,
-               param = {{30,0},{0,0},{60,0},{60,30}}
+               param = {{0,30},{0,0},{60,0},{60,30}}
             },
             { method = IEEE_arc_method,
               param = {x=30,y=30,r=30,startAngle = 0, endAngle = 180}
@@ -633,7 +685,7 @@ local IEEE_sym = {
     },
     ['11'] = { -- high current
         method = IEEE_polyLine_method,
-        param = {{0,0},{0,80},{80, 40},{0,0}} -- points with sacle factor = 100 place at 0,0
+        param = {{0,0},{0,80},{80, 40},{0,0}}
     },
     ['12'] = { -- pulse
         method = IEEE_polyLine_method,
@@ -717,17 +769,20 @@ local function adCompToSymbol(comp, libname4symbol)
     comp.drawPinNo = 'N'
     comp.drawPinName = 'N'
     local partUsed = {}
+    local bbox = BBOX.create(1,1)
     
     for pin in element(comp.pins) do
         pin_str = pin_str .. pin:toSymbol() .. "\n"
         if pin.disName then comp.drawPinName = 'Y' end
         if pin.disNum then comp.drawPinNo = 'Y' end
         partUsed[tonumber(pin.partNum)] = 1
+        bbox = BBOX.merge(bbox, pin.bbox)
     end
     
     for graph in element(comp.graphs) do
         graph_str = graph_str .. graph:toSymbol() .. "\n"
         partUsed[tonumber(graph.part)] = 1
+        bbox = BBOX.merge(bbox, graph.bbox)
     end
     comp.partNum = #partUsed
     comp.defName = make_name(comp.name)
@@ -737,14 +792,37 @@ local function adCompToSymbol(comp, libname4symbol)
     if libname4symbol and libname4symbol ~= "" then
         fp = libname4symbol .. ":" .. string.upper(fp)
     end
+    local bbl,bbt,bbr,bbb = BBOX.splitBB(bbox)
     local texts = {mkDummy(),mkDummy(comp.name),mkDummy(fp),mkDummy("")}
+    texts[3].x = math.floor(bbl)
+    texts[3].y = math.floor(bbt - 200)
+    texts[3].hJust = 'L'
+    texts[3].vJust = 'B'
+    texts[2].x = math.floor(bbl + 50)
+    texts[2].y = math.floor(bbb + 150)
+    texts[2].hJust = 'L'
+    texts[2].vJust = 'B'
+    local vPos = math.floor(bbt - 300)
     for text in element(comp.texts) do
         if      text.t == 'Designator' then
+            text.x = math.floor(bbl)
+            text.y = math.floor(bbb + 50)
             texts[1] = text
+        elseif  text.t == 'Comment' then
+            text.x = math.floor(bbl + 150)
+            text.y = math.floor(bbb + 50)
+            texts[#texts+1] = text
         elseif  text.t == 'ComponentLink1URL' then
+            text.x = math.floor(bbl)
+            text.y = math.floor(bbt - 100)
             texts[4] = text
         else
+            if text.t ~= "user" then
+                text.x = math.floor(bbl)
+                text.y = math.floor(vPos)
+            end
             texts[#texts+1] = text
+            vPos = vPos - 100
         end
         text.value = text.value or ""
         text.value = '"'..text.value..'"'

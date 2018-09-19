@@ -9,7 +9,7 @@ function toArc(angle)
     return angle/90*PI_2
 end
 
-local function rotate_p2p(ox,oy, mx,my, rotate)
+function rotate_p2p(ox,oy, mx,my, rotate)
     local rot = rotate and toArc(rotate) or toArc(0)
     local nx = (mx - ox)*math.cos(rot) - (my - oy)*math.sin(rot) + ox
     local ny = (mx - ox)*math.sin(rot) + (my - oy)*math.cos(rot) + oy
@@ -28,6 +28,10 @@ end
 local BBOX = {
     splitBB = splitBB,
     packBB = packBB,
+    create2P = function(x1,y1,x2,y2)
+        local bb = BBOX.create(math.abs(x1-x2), math.abs(y1-y2))
+        return BBOX.moveTo(bb, (x1+x2)/2, (y1+y2)/2)
+    end,
     create = function(w,h,x,y)
         x = x or 0
         y = y or 0
