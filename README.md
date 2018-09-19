@@ -1,22 +1,42 @@
-# pcad2kicad
-一个将PCAD文本格式的封装库转化成kicad格式的封装库的工具
+# PCAD/AD库文件转换KiCad工具
+# Convert PCAD/AD library to Kicad
+特点:
 
-Convert pcad foot print library to kicad mod
+1. Altium Designer的二进制原理图库转换成KiCad格式
 
-# How to USE
+2. PCAD的ASCII原理图库转换成KiCad格式
 
-使用lua命令行:
+3. PCAD的ASCII封装图库转换成KiCad格式
 
-lua pcad2kicad.lua <input pcad library name> [output library name] [output library path] [footprint lib for symbol]
+Feature:
 
-或者是用GUI工具:
+1. Altium Designer binary schlib to KiCad symbol library
 
-从[这里](https://github.com/xtoolbox/Introduction/releases)下载XToolBox，然后将可执行程序解压到与script.lua相同的目录下，然后运行。
+2. PCAD ASCII symbol library to KiCad symbol library
 
-Use command line:
+3. PCAD ASCII footprint library to KiCad footprint library
 
-lua pcad2kicad.lua <input pcad library name> [output library name] [output library path] [footprint lib for symbol]
 
-Or use the GUI tool:
+## ad2kicad
+require [7z](https://www.7-zip.org/download.html) and [lua 5.3](https://sourceforge.net/projects/luabinaries/files/5.3.4/)
+### Signle mode:
+```sh
+lua ad2kicad.lua <inName> [outName] [fpLib]
+```
+### Batch mode:
+```sh
+lua ad2kicad.lua --batch <inPath> [outPath] [fpLib] [prefix] [O1=N1[ O2=N2...]]
+```
 
-Download the xtoolbox exe file from [here](https://github.com/xtoolbox/Introduction/releases). Then run the executable file in the same folder of script.lua.
+
+
+## pcad2kicad
+require [lua 5.3](https://sourceforge.net/projects/luabinaries/files/5.3.4/)
+### Signle mode:
+```sh
+lua pcad2kicad.lua <inName> [outName] [outPath] [fpLib]
+```
+### Batch mode:
+```sh
+lua pcad2kicad.lua --batch <inPath> [outPath] [fpLib] [prefix] [O1=N1[ O2=N2...]]
+```
