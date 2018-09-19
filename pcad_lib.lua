@@ -1,3 +1,9 @@
+---------------------------------------------------------------------
+----   PCAD ascii format library parser
+----   Read data from the S-Expression file, then convert them 
+----   into kicad format
+----   Can convert both the symbol library and footprint library
+----------------------------------------------------------------------
 require("s_format")
 BBOX = require("bbox")
 local LogI = function() end
@@ -1021,9 +1027,9 @@ local function collect_part_and_symbol(lib_table, pads)
 end
 
 local function mk_empty_dir(dir)
-    os.execute('rm -r "' .. dir)
-    os.execute('del "' .. dir .. '" /Q')
-    os.execute('mkdir "' .. dir .. '"')
+    exec('rm -r "' .. dir..'"')
+    exec('rd "' .. dir .. '" /Q /S')
+    exec('mkdir "' .. dir .. '"')
 end
 function removeParentheses(n)
     local pn = string.gsub(n, "%(", "[")
