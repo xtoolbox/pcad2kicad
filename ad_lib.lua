@@ -396,6 +396,7 @@ local function parseCompHeader(block,fonts,comp)
     comp.drawPinName = 'Y'
     comp.ref = '***'
     comp.partNum = block.PARTCOUNT
+    comp.description = block[ [[COMPONENTDESCRIPTION]] ] or ""
 end
 
 local function parseDummy(block,fonts,comp)
@@ -779,7 +780,7 @@ local function adCompToSymbol(comp, libname4symbol)
         fp = libname4symbol .. ":" .. string.upper(fp)
     end
     local bbl,bbt,bbr,bbb = BBOX.splitBB(bbox)
-    local texts = {mkDummy(),mkDummy(comp.name),mkDummy(fp),mkDummy("")}
+    local texts = {mkDummy(),mkDummy(comp.name),mkDummy(fp),mkDummy(""), mkDummy(comp.description, 'description')}
     texts[3].x = math.floor(bbl)
     texts[3].y = math.floor(bbt - 200)
     texts[3].hJust = 'L'
