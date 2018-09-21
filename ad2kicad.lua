@@ -22,6 +22,31 @@ if #arg < 1 then
     usage()
 end
 
+function getLog(name)
+    local res = {}
+    res.fp = io.open(name, "a+")
+    res.log = function(f, ...)
+        if f.fp then
+            f.fp:write("[",os.date(), "]", ...)
+        end
+        io.write(...)
+        io.flush()
+    end
+    res.write = function(f, ...)
+        if f.fp then
+            f.fp:write(...)
+        end
+        io.write(...)
+        io.flush()
+    end
+    res.close = function(f)
+        if f and f.fp then
+            f.fp:close()
+        end
+    end
+    return res
+end
+
 if arg[1] == "--batch" then
     if #arg < 2 then
         usage()
@@ -40,6 +65,11 @@ if arg[1] == "--batch" then
     end
     local files = get_file_names(inPath, "*.SchLib")
     print("Batch process "..#files.. " files")
+    local flog = getLog(outPath.."/convert.log")
+    flog:log("Start convert AD schlibs to kicad lib\n")
+    flog:log("Command line: lua ad2kicad.lua ")
+    for i,v in ipairs(arg) do flog:write(v, " ") end
+    flog:write("\n")
     for i=1,#files do
         local libName = files[i]
         local fname = libName .. ".SchLib"
@@ -50,7 +80,10 @@ if arg[1] == "--batch" then
         end
         libName = outPath .. "/" .. libName .. ".lib"
         convert_schlib(inPath.."/"..fname, libName, symbolLib, log_info)
+        flog:log("Convert " .. inPath.."/"..fname .. " to " .. libName .. "   done  \n")
     end
+    flog:log("Convert done\n")
+    flog:close()
 else
     convert_schlib(arg[1], arg[2] or "", arg[3] or "", log_info)
 end

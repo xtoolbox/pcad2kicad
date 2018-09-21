@@ -63,7 +63,7 @@ function Bind3DView:__init()
     self.btnSysPath = QPushButton("...")
     self.edit3DPath = QLineEdit("X:/kicad-packages3D")
     self.btn3DPath = QPushButton("...")
-    self.editModPath = QLineEdit("X:/lc_pcad_kicad_lib/lc_lib.pretty")
+    self.editModPath = QLineEdit("X:/lc_kicad_lib/lc_lib.pretty")
     self.btnModPath = QPushButton("...")
     self.fpList = QTableWidget()
     self.btnParse = QPushButton("Parse")
@@ -124,9 +124,15 @@ function Bind3DView:__init()
     end
     
     function saveFpParams(path)
-        local sName = path .. ".lua"
+        local sName = path .. "/3D_bind_data.lua"
         local f = io.open(sName, "w+")
         if f then
+            f:write([[
+--------------------------------------------------------------------
+------- this file in auto generate by the bind3D -------------------
+------- https://github.com/xtoolbox/pcad2kicad   -------------------
+--------------------------------------------------------------------
+]])
             f:write("fpTable = {\n")
             for i,v in ipairs(self.kimods) do
                 local st = string.gsub([[
@@ -147,7 +153,7 @@ function Bind3DView:__init()
     
     function loadFpParams(path, force)
         self.kimods = nil
-        local sName = path .. ".lua"
+        local sName = path .. "/3D_bind_data.lua"
         local f = nil
         if not force then
             f = io.open(sName, "r")
