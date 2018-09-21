@@ -89,7 +89,7 @@ local function posToString(x,y,rotate)
     return "at " .. x .. " " .. y .. (rotate and (" " .. rotate) or "")
 end
 local function print_pad(pad, num, x,y, rotate)
-    local at = "("..posToString(x,y,rotate) .. ")"
+    local at = " ("..posToString(x,y,rotate) .. ")"
     local r = "(pad " ..num .." " .. pad.type .. " " .. pad.shape ..
     at .. 
     " (size " .. pad.size .. ")" ..
