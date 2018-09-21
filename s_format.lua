@@ -40,7 +40,7 @@ function get_atom(s, pos)
         return get_list_data(s, pos+1)
     else
         for i=pos+1, #s do
-            if isSpace(s,i) or isRPar(s,i) then
+            if isSpace(s,i) or isRPar(s,i) or isLPar(s,i) then
                 return string.sub(s,pos,i-1),i
             end
         end
@@ -96,6 +96,7 @@ function s_expand(t, keys, opt_keys, def_keys, full_parse)
             r[k] = v
         end
     end
+    opt_keys = opt_keys or {}
     for i=2,#t do
         if type(t[i]) == "table" then
             local n = t[i][1]
