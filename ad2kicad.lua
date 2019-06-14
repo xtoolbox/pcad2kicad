@@ -70,6 +70,13 @@ if arg[1] == "--batch" then
     flog:log("Command line: lua ad2kicad.lua ")
     for i,v in ipairs(arg) do flog:write(v, " ") end
     flog:write("\n")
+    _G.logE = function(...)
+        local s = ""
+        for i,v in ipairs({...}) do
+            s = s .. tostring(v) .. " "
+        end
+        flog:write("ERROR:  ", s, "\n")
+    end
     for i=1,#files do
         local libName = files[i]
         local fname = libName .. ".SchLib"

@@ -6,6 +6,67 @@
 ---------------------------------------------------------------------
 require("util")
 require("pcad_lib")
+
+-- UTF8 encoding
+-- 0xxx xxxx
+-- 110x xxxx  10xxxxxx
+-- 1110 xxxx  10xxxxxx  10xxxxxx
+-- 1111 0xxx  10xxxxxx  10xxxxxx  10xxxxxx
+-- 1111 10xx  10xxxxxx  10xxxxxx  10xxxxxx  10xxxxxx
+-- 1111 110x  10xxxxxx  10xxxxxx  10xxxxxx  10xxxxxx  10xxxxxx
+local function ensureUTF8(str)
+    local lead = 0
+    if not string.find(str, "[\x80-\xff]") then
+        return str
+    end
+    local r = true
+    for i=1,#str do
+        local t = str:byte(i)
+        if lead > 0 then
+            if t > 0xC0 then
+                r = false
+                break
+            end
+            lead = lead - 1
+        else
+            if t < 0x80 then
+                lead = 0
+            elseif t >= 0xc0 then
+                if t < 0xe0 then
+                    lead = 1
+                elseif t < 0xf0 then
+                    lead = 2
+                elseif t < 0xf8  then
+                    lead = 3
+                elseif t < 0xfC  then
+                    lead = 4
+                elseif t < 0xfE  then
+                    lead = 5
+                else
+                    r = false
+                    break
+                end
+            else
+                r = false
+                break
+            end
+        end
+    end
+    if not r then
+        local s = string.gsub(str, "[\x80-\xff].", "??")
+        if _G.logE then
+            _G.logE("String Not ASCII or UTF8 Convert", str, "to", s)
+        end
+        print("Warning: String Not ASCII or UTF8 Convert", str, "to", s)
+        return s
+    end
+    return str
+end
+local function get_str(object, field)
+    return ensureUTF8(object[ [[%UTF8%]] .. field] or object[field] or "")
+end
+
+
 local delimer = "|+"
 local logData = print
 local function parseADBlock(data, pos)
@@ -93,7 +154,7 @@ local function parse_Header(headerName)
             local nUtf = '%UTF8%COMPDESCR'..tostring(i-1)
             compList[#compList+1] = {
                 name = block[nRef],
-                desc = block[n],
+                desc = get_str(block,n),
                 desc8 = block[nUtf],
             }
             --logData(block[nRef])
@@ -288,6 +349,7 @@ local function make_symbol_pin_name(n)
     return res
 end
 
+
 local function parsePin(data,fonts, comp)
     local pin = {}
     pin.partNum = string.unpack("I1", data, 6)
@@ -338,6 +400,8 @@ local function parsePin(data,fonts, comp)
     local n2 = string.unpack("c"..l2, data, pos + 1)
     
     pin.name = make_symbol_pin_name(n1)
+    pin.name = ensureUTF8(pin.name)
+    
     pin.num = n2
     pin.eleType,pin.tl = get_pin_type(pin.t)
     pin.toSymbol = adPinToSymbol
@@ -346,7 +410,7 @@ end
 
 local function parseText(block,fonts,comp)
     local t = block.NAME or 'user'
-    local value = block.TEXT
+    local value = get_str(block, "TEXT")
     local x = ad2kicad_CoordValue(block['LOCATION.X'])
     local y = ad2kicad_CoordValue(block['LOCATION.Y'])
     local rotate = block['ORIENTATION'] or 0
@@ -391,12 +455,12 @@ end
 
 local function parseCompHeader(block,fonts,comp)
     --list_block(block)
-    comp.name = block.LIBREFERENCE
+    comp.name = get_str(block, "LIBREFERENCE")
     comp.drawPinNo = 'Y'
     comp.drawPinName = 'Y'
     comp.ref = '***'
     comp.partNum = block.PARTCOUNT
-    comp.description = block[ [[COMPONENTDESCRIPTION]] ] or ""
+    comp.description = get_str(block, "COMPONENTDESCRIPTION") --[ [[%UTF8%COMPONENTDESCRIPTION]] ] or block[ [[COMPONENTDESCRIPTION]] ] or ""
 end
 
 local function parseDummy(block,fonts,comp)
