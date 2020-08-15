@@ -142,15 +142,15 @@ local function parse_Header(headerName)
     local fonts = {}
     if #blocks > 0 then
         local block = blocks[1]
-        local cnt = tonumber(block.COMPCOUNT)
+        local cnt = tonumber(block.CompCount)
         local compCnt = cnt
         if not cnt then
             logData("No comp in file " .. headerName)
             return
         end
         for i=1,cnt do
-            local nRef = 'LIBREF' .. tostring(i-1)
-            local n = 'COMPDESCR'..tostring(i-1)
+            local nRef = 'LibRef' .. tostring(i-1)
+            local n = 'CompDescr'..tostring(i-1)
             local nUtf = '%UTF8%COMPDESCR'..tostring(i-1)
             compList[#compList+1] = {
                 name = block[nRef],
@@ -159,7 +159,7 @@ local function parse_Header(headerName)
             }
             --logData(block[nRef])
         end
-        cnt = tonumber(block.FONTIDCOUNT)
+        cnt = tonumber(block.FontIdCount)
         if not cnt then
             logData("No font in file " .. headerName)
             return
@@ -167,8 +167,8 @@ local function parse_Header(headerName)
         for i=1,cnt do
             local n = tostring(i)
             fonts[n] = {
-                size = block["SIZE"..n],
-                name = block["FONTNAME"..n],
+                size = block["Size"..n],
+                name = block["FontName"..n],
                 unerline = block["UNDERLINE"..n],
             }
         end
@@ -459,7 +459,7 @@ local function parseCompHeader(block,fonts,comp)
     comp.drawPinNo = 'Y'
     comp.drawPinName = 'Y'
     comp.ref = '***'
-    comp.partNum = block.PARTCOUNT
+    comp.partNum = block.PartCount
     comp.description = get_str(block, "COMPONENTDESCRIPTION") --[ [[%UTF8%COMPONENTDESCRIPTION]] ] or block[ [[COMPONENTDESCRIPTION]] ] or ""
 end
 
