@@ -7,6 +7,70 @@
 require("util")
 require("pcad_lib")
 
+
+--- Creates a case table with case insensitive string lookup.
+-- Table can be used to store and lookup non-string keys as well.
+-- Keys are case preserved while iterating (calling pairs).
+-- The case will be updated after a set operation.
+--
+-- E.g:
+-- * keys "ABC", "abc" and "aBc" are all considered the same key.
+-- * Setting "ABC", "abc" then "aBc" the case returned when iterating will be "aBc".
+--
+-- @return A table with case insensitive lookup.
+-- https://nachtimwald.com/2019/02/12/lua-case-insenstive-table/
+function create_case_table()
+    -- For case preservation.
+    local lookup = {}
+
+    -- Stores the values so we can properly update. We need the main table to always return nil on lookup
+    -- so __newindex is called when setting a value. If this doesn't happen then a case change (FOO to foo)
+    -- won't happen because __newindex is only called when the lookup fails (there isn't a metamethod for 
+    -- lookup we can use).
+    local values = {}
+    local mt = {
+        __index=function(t, k)
+            local v = nil
+            if type(k) == "string" then
+                -- Try to get the value for the key normalized.
+                v = values[k:lower()]
+            end
+            if v == nil then
+                v = values[k]
+            end
+            return v
+        end,
+        __newindex=function(t, k, v)
+            -- Store all strings normalized as lowercase.
+            if type(k) == "string" then
+                lookup[k:lower()] = v ~= nil and k or nil -- Clear the lookup value if we're setting to nil.
+                k = k:lower()
+            end
+            values[k] = v
+        end,
+        __pairs=function(t)
+            local function n(t, i)
+                if i ~= nil then
+                    -- Check that strings that have been normalized exist in the table.
+                    if type(i) == "string" and values[i:lower()] ~= nil then
+                        i = i:lower()
+                    end
+                    -- Ensure the value exists in the table.
+                    if values[i] == nil then
+                        return nil
+                    end
+                end
+                local k,v = next(values, i)
+                return lookup[k] or k, v
+            end
+            return n, t, nil
+        end
+    }
+
+    return setmetatable({}, mt)
+end
+
+
 -- UTF8 encoding
 -- 0xxx xxxx
 -- 110x xxxx  10xxxxxx
@@ -70,7 +134,7 @@ end
 local delimer = "|+"
 local logData = print
 local function parseADBlock(data, pos)
-    local r = {}
+    local r = create_case_table()
     local length, t = string.unpack("I2I2", data, pos)
     local lastPos = pos+4+length
     pos = pos + 4
