@@ -955,8 +955,23 @@ local function adCompToSymbol(comp, libname4symbol)
     return r
 end
 
+function fileExist(name)
+    local file,err = io.open(name)
+    if file then
+        io.close(file)
+        return true
+    end
+    --logData(err)
+    return false
+end
+
 local function parseComp(compPath, fonts)
-    local blocks = parseADBlockFile(compPath.."/data")
+    local blocks
+    if fileExist(compPath.."/data") then
+        blocks = parseADBlockFile(compPath.."/data")
+    else
+        blocks = parseADBlockFile(compPath.."/Data")
+    end
     local r = {}
     r.texts = {}
     r.graphs = {}
@@ -1002,7 +1017,7 @@ end
 function convert_schlib(inputName, outputName, fpLibName,logFunc)
     logData = logFunc or logData
     local oPath = string.gsub(inputName, "(%.[^%.]+)$", "")
-    exec('7z x "'..inputName ..'" -y -o"'..oPath..'"')
+    os.execute('7z x "'..inputName ..'" -y -o"'..oPath..'"')
     if not outputName or outputName == "" then
         outputName = oPath .. ".lib"
     end
@@ -1021,5 +1036,11 @@ EESchema-LIBRARY Version 2.4
     else
         logData(e)
     end
-    exec('rd "' .. oPath .. '" /Q /S')
+    if package.config:sub(1,1) == '/' then
+        logData("Linux")
+        os.execute('rm ' .. oPath .. ' -fr')
+    else
+        logData("Windows")
+        os.execute('rd "' .. oPath .. '" /Q /S')
+    end
 end
